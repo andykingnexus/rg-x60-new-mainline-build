@@ -3,6 +3,14 @@ name: Build ImmortalWrt Mainline RG-X60 New (107MiB)
 on:
   workflow_dispatch:
     inputs:
+      firmware_flavor:
+        description: "Firmware flavor"
+        required: true
+        default: chizi-shared
+        type: choice
+        options:
+          - chizi-shared
+          - dae-honk-compat
       clean_build:
         description: "Ignore ccache for this build"
         required: true
@@ -18,7 +26,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: mainline-rg-x60-new-107m-${{ github.ref }}
+  group: mainline-rg-x60-new-107m-${{ github.ref }}-${{ inputs.firmware_flavor }}
   cancel-in-progress: true
 
 env:
@@ -26,7 +34,7 @@ env:
   OPENWRT_BRANCH: master
   OPENWRT_DIR: openwrt
   PROFILE: ruijie_rg-x60-new-mtkuboot
-  CONFIG_FILE: defconfig/mainline-rg-x60-new-107m.config
+  BUILD_FLAVOR: ${{ inputs.firmware_flavor }}
   CCACHE_DIR: ${{ github.workspace }}/.ccache
   TZ: Asia/Taipei
 
@@ -100,10 +108,10 @@ jobs:
         id: ccache-cache
         with:
           path: .ccache
-          key: mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m.config', 'mainline/**', 'scripts/apply-mainline-rg-x60-new.sh') }}
+          key: mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m*.config', 'files/**', 'mainline/**', 'scripts/apply-mainline-rg-x60-new.sh', 'scripts/validate-mainline-config.sh') }}
           restore-keys: |
-            mainline-rgx60new-107m-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-
-            mainline-rgx60new-107m-ccache-${{ runner.os }}-
+            mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-
+            mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-
 
       - name: Apply RG-X60-new 107MiB mainline board support
         shell: bash
@@ -113,13 +121,16 @@ jobs:
           grep -Fq 'reg = <0x680000 0x6b00000>;' \
             "$OPENWRT_DIR/target/linux/mediatek/dts/mt7986a-ruijie-rg-x60-new-mtkuboot.dts"
 
-      - name: Apply first-boot network defaults
+      - name: Apply first-boot defaults
         shell: bash
         run: |
           set -euo pipefail
           test -f files/etc/config/network
-          mkdir -p "$OPENWRT_DIR/files/etc/config"
+          test -f files/etc/uci-defaults/99-rg-x60-wireless-country
+          mkdir -p "$OPENWRT_DIR/files/etc/config" "$OPENWRT_DIR/files/etc/uci-defaults"
           cp files/etc/config/network "$OPENWRT_DIR/files/etc/config/network"
+          install -Dm0755 files/etc/uci-defaults/99-rg-x60-wireless-country \
+            "$OPENWRT_DIR/files/etc/uci-defaults/99-rg-x60-wireless-country"
           ! grep -Eq "option (username|password)" "$OPENWRT_DIR/files/etc/config/network"
           grep -Fq "192.168.10.1/24" "$OPENWRT_DIR/files/etc/config/network"
 
@@ -131,114 +142,31 @@ jobs:
           ./scripts/feeds update -a
           ./scripts/feeds install -a
 
-      - name: Resolve custom firmware configuration
+      - name: Resolve selected firmware configuration
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
-          cp "../$CONFIG_FILE" .config
+          case "$BUILD_FLAVOR" in
+            chizi-shared)
+              config_file=defconfig/mainline-rg-x60-new-107m.config
+              ;;
+            dae-honk-compat)
+              config_file=defconfig/mainline-rg-x60-new-107m-dae-honk.config
+              ;;
+            *)
+              echo "Unknown firmware flavor: $BUILD_FLAVOR" >&2
+              exit 1
+              ;;
+          esac
+
+          cp "../$config_file" .config
           make defconfig
-          cp .config ../mainline-rg-x60-new-107m.config.full
+          cp .config "../mainline-rg-x60-new-107m-$BUILD_FLAVOR.config.full"
+          bash ../scripts/validate-mainline-config.sh "$BUILD_FLAVOR" .config "$PROFILE"
 
-          require_y() {
-            grep -Fxq "$1=y" .config || {
-              echo "Required configuration missing: $1=y" >&2
-              exit 1
-            }
-          }
-          require_disabled() {
-            if grep -Eq "^$1=(y|m)$" .config; then
-              echo "Unexpectedly enabled: $1" >&2
-              exit 1
-            fi
-          }
-
-          target_count=$(grep -Ec '^CONFIG_TARGET_mediatek_filogic_DEVICE_.*=y$' .config || true)
-          test "$target_count" -eq 1
-          grep -Fxq "CONFIG_TARGET_mediatek_filogic_DEVICE_$PROFILE=y" .config
-
-          for symbol in \
-            CONFIG_TARGET_ROOTFS_INITRAMFS \
-            CONFIG_KERNEL_DEBUG_FS \
-            CONFIG_KERNEL_FTRACE \
-            CONFIG_KERNEL_FUNCTION_TRACER \
-            CONFIG_KERNEL_DYNAMIC_FTRACE \
-            CONFIG_PACKAGE_mtd \
-            CONFIG_PACKAGE_firewall4 \
-            CONFIG_PACKAGE_nftables-json \
-            CONFIG_PACKAGE_kmod-nft-core \
-            CONFIG_PACKAGE_kmod-nft-fib \
-            CONFIG_PACKAGE_kmod-nft-nat \
-            CONFIG_PACKAGE_kmod-nft-offload \
-            CONFIG_PACKAGE_kmod-sched-core \
-            CONFIG_PACKAGE_kmod-sched-bpf \
-            CONFIG_PACKAGE_kmod-inet-diag \
-            CONFIG_PACKAGE_kmod-netlink-diag \
-            CONFIG_PACKAGE_kmod-tun \
-            CONFIG_PACKAGE_kmod-phy-airoha-en8811h \
-            CONFIG_PACKAGE_airoha-en8811h-firmware \
-            CONFIG_PACKAGE_procd-ujail
-          do
-            require_y "$symbol"
-          done
-
-          for symbol in \
-            CONFIG_PACKAGE_btop \
-            CONFIG_PACKAGE_htop \
-            CONFIG_KERNEL_BPF_EVENTS \
-            CONFIG_KERNEL_KPROBES \
-            CONFIG_KERNEL_KPROBE_EVENTS \
-            CONFIG_KERNEL_DEBUG_INFO_BTF \
-            CONFIG_KERNEL_DEBUG_INFO_BTF_MODULES \
-            CONFIG_KERNEL_BPF_STREAM_PARSER \
-            CONFIG_KERNEL_NETKIT \
-            CONFIG_KERNEL_XDP_SOCKETS
-          do
-            require_disabled "$symbol"
-          done
-
-          # Native nftables only: reject legacy iptables/ipset/ebtables,
-          # TProxy, NFQUEUE and their lower modules.
-          for symbol in \
-            CONFIG_PACKAGE_bridger \
-            CONFIG_PACKAGE_ebtables \
-            CONFIG_PACKAGE_ip6tables-nft \
-            CONFIG_PACKAGE_ipset \
-            CONFIG_PACKAGE_iptables-nft \
-            CONFIG_PACKAGE_xtables-nft \
-            CONFIG_PACKAGE_kmod-ebtables \
-            CONFIG_PACKAGE_kmod-ebtables-ipv4 \
-            CONFIG_PACKAGE_kmod-ebtables-ipv6 \
-            CONFIG_PACKAGE_kmod-ip6tables \
-            CONFIG_PACKAGE_kmod-ipt-compat-xtables \
-            CONFIG_PACKAGE_kmod-ipt-core \
-            CONFIG_PACKAGE_kmod-ipt-ipset \
-            CONFIG_PACKAGE_kmod-ipt-tproxy \
-            CONFIG_PACKAGE_kmod-iptables \
-            CONFIG_PACKAGE_kmod-nf-ipt \
-            CONFIG_PACKAGE_kmod-nf-ipt6 \
-            CONFIG_PACKAGE_kmod-nf-socket \
-            CONFIG_PACKAGE_kmod-nf-tproxy \
-            CONFIG_PACKAGE_kmod-nfnetlink-queue \
-            CONFIG_PACKAGE_kmod-nft-compat \
-            CONFIG_PACKAGE_kmod-nft-queue \
-            CONFIG_PACKAGE_kmod-nft-socket \
-            CONFIG_PACKAGE_kmod-nft-tproxy \
-            CONFIG_PACKAGE_iptables-mod-tproxy \
-            CONFIG_PACKAGE_kmod-veth \
-            CONFIG_PACKAGE_libipset \
-            CONFIG_PACKAGE_libiptext \
-            CONFIG_PACKAGE_libiptext-nft \
-            CONFIG_PACKAGE_libiptext6 \
-            CONFIG_PACKAGE_libxtables
-          do
-            require_disabled "$symbol"
-          done
-
-          echo "Selected profile:"
+          echo "Selected flavor: $BUILD_FLAVOR"
           grep -E '^CONFIG_TARGET_mediatek_filogic_DEVICE_.*=y$' .config
-          echo "Resolved mainline configuration:"
-          grep -E '^(CONFIG_(KERNEL_(DEBUG_FS|FTRACE|FUNCTION_TRACER|DYNAMIC_FTRACE)|PACKAGE_(mtd|firewall4|kmod-(nft|sched|inet-diag|netlink-diag|tun|phy-airoha-en8811h)|airoha-en8811h-firmware|procd-ujail)))=' .config
 
       - name: Configure ccache
         shell: bash
@@ -282,8 +210,8 @@ jobs:
           set -euo pipefail
           . ../source-info.env
 
-          # Configuration has already been resolved and checked before the
-          # build. At this point require only the two actual flashable images.
+          # The selected configuration was checked before the build. At this
+          # point require only the two actual flashable images.
           image=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot-squashfs-sysupgrade.bin' -print -quit)
           initramfs=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
@@ -292,8 +220,8 @@ jobs:
           test -n "$initramfs"
 
           mkdir -p ../artifacts
-          cp "$image" ../artifacts/RG-X60-New-mainline-107M-sysupgrade.bin
-          cp "$initramfs" ../artifacts/RG-X60-New-mainline-107M-initramfs-kernel.bin
+          cp "$image" "../artifacts/RG-X60-New-mainline-107M-$BUILD_FLAVOR-sysupgrade.bin"
+          cp "$initramfs" "../artifacts/RG-X60-New-mainline-107M-$BUILD_FLAVOR-initramfs-kernel.bin"
 
           manifest=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot*.manifest' -print -quit || true)
@@ -301,13 +229,14 @@ jobs:
             cp "$manifest" ../artifacts/
           fi
 
-          cp ../mainline-rg-x60-new-107m.config.full ../artifacts/config.full
+          cp "../mainline-rg-x60-new-107m-$BUILD_FLAVOR.config.full" ../artifacts/config.full
           cp bin/targets/mediatek/filogic/sha256sums ../artifacts/upstream-sha256sums
           {
             echo "source_repository=$OPENWRT_REPO"
             echo "source_branch=$OPENWRT_BRANCH"
             echo "source_commit=$SOURCE_COMMIT"
             echo "device_profile=$PROFILE"
+            echo "firmware_flavor=$BUILD_FLAVOR"
             echo "compatible=ruijie,rg-x60-new-mtkuboot"
             echo "ubi_offset=0x680000"
             echo "ubi_size=0x6b00000"
@@ -340,7 +269,7 @@ jobs:
       - name: Upload firmware and verification files
         uses: actions/upload-artifact@v4
         with:
-          name: RG-X60-New-mainline-107M-${{ steps.source.outputs.short_sha }}
+          name: RG-X60-New-mainline-107M-${{ inputs.firmware_flavor }}-${{ steps.source.outputs.short_sha }}
           path: artifacts/
           if-no-files-found: error
           retention-days: 30
@@ -352,190 +281,7 @@ jobs:
           name: RG-X60-New-mainline-107M-failure-logs-${{ github.run_number }}
           path: |
             build.log
-            mainline-rg-x60-new-107m.config.full
-            openwrt/.config
-            openwrt/logs/
-          if-no-files-found: ignore
-          retention-days: 14
- "$dts"
-          echo "Validated DTS UBI layout: 107MiB ($dts)"
-
-          kernel_config=$(find build_dir -type f -path '*/linux-mediatek_filogic/linux-*/.config' -print -quit)
-          test -n "$kernel_config"
-          echo "Kernel config: $kernel_config"
-
-          require_kernel_y() {
-            grep -Fxq "$1=y" "$kernel_config" || {
-              echo "Required kernel configuration missing: $1=y" >&2
-              exit 1
-            }
-          }
-          require_kernel_y_or_m() {
-            grep -Eq "^$1=(y|m)$" "$kernel_config" || {
-              echo "Required kernel configuration missing: $1=y/m" >&2
-              exit 1
-            }
-          }
-          require_kernel_disabled() {
-            if grep -Eq "^$1=(y|m)$" "$kernel_config"; then
-              echo "Unexpected kernel configuration: $1" >&2
-              exit 1
-            fi
-          }
-
-          for symbol in \
-            CONFIG_BPF \
-            CONFIG_BPF_SYSCALL \
-            CONFIG_BPF_JIT \
-            CONFIG_NET_SCHED \
-            CONFIG_NET_CLS \
-            CONFIG_NET_CLS_ACT \
-            CONFIG_DEBUG_FS
-          do
-            require_kernel_y "$symbol"
-          done
-          for symbol in CONFIG_NET_SCH_INGRESS CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF; do
-            require_kernel_y_or_m "$symbol"
-          done
-          for symbol in \
-            CONFIG_KPROBES \
-            CONFIG_KPROBE_EVENTS \
-            CONFIG_BPF_EVENTS \
-            CONFIG_DEBUG_INFO_BTF \
-            CONFIG_DEBUG_INFO_BTF_MODULES \
-            CONFIG_BPF_STREAM_PARSER \
-            CONFIG_NETKIT \
-            CONFIG_XDP_SOCKETS
-          do
-            require_kernel_disabled "$symbol"
-          done
-
-          image=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -name '*ruijie_rg-x60-new-mtkuboot-squashfs-sysupgrade.bin' -print -quit)
-          initramfs=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -name '*ruijie_rg-x60-new-mtkuboot-initramfs-kernel.bin' -print -quit)
-          test -n "$image"
-          test -n "$initramfs"
-
-          metadata="$RUNNER_TEMP/rg-x60-new-mainline-metadata.json"
-          staging_dir/host/bin/fwtool -i "$metadata" "$image"
-          grep -Fq '"ruijie,rg-x60-new-mtkuboot"' "$metadata"
-          grep -Fq '"ruijie,rg-x60-107m"' "$metadata"
-
-          manifest=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -name '*ruijie_rg-x60-new-mtkuboot*.manifest' -print -quit)
-          test -n "$manifest"
-          for package in \
-            airoha-en8811h-firmware \
-            firewall4 \
-            kmod-phy-airoha-en8811h \
-            kmod-sched-core \
-            kmod-sched-bpf \
-            kmod-inet-diag \
-            kmod-netlink-diag \
-            kmod-tun \
-            mtd \
-            procd-ujail
-          do
-            grep -Eq "^$package[[:space:]]+-[[:space:]]+" "$manifest"
-          done
-
-          # The final rootfs manifest is authoritative; cached APKs are not.
-          for package in \
-            bridger \
-            ebtables \
-            ip6tables-nft \
-            ipset \
-            iptables-nft \
-            xtables-nft \
-            kmod-ebtables \
-            kmod-ebtables-ipv4 \
-            kmod-ebtables-ipv6 \
-            kmod-ip6tables \
-            kmod-ipt-compat-xtables \
-            kmod-ipt-core \
-            kmod-ipt-ipset \
-            kmod-ipt-tproxy \
-            kmod-iptables \
-            kmod-nf-ipt \
-            kmod-nf-ipt6 \
-            kmod-nf-socket \
-            kmod-nf-tproxy \
-            kmod-nfnetlink-queue \
-            kmod-nft-compat \
-            kmod-nft-queue \
-            kmod-nft-socket \
-            kmod-nft-tproxy \
-            iptables-mod-tproxy \
-            libipset \
-            libiptext \
-            libiptext-nft \
-            libiptext6 \
-            libxtables
-          do
-            if grep -Eq "^$package[[:space:]]+-[[:space:]]+" "$manifest"; then
-              echo "Unexpected legacy package in final image: $package" >&2
-              exit 1
-            fi
-          done
-
-          mkdir -p ../artifacts
-          cp "$image" ../artifacts/RG-X60-New-mainline-107M-sysupgrade.bin
-          cp "$initramfs" ../artifacts/RG-X60-New-mainline-107M-initramfs-kernel.bin
-          cp "$manifest" ../artifacts/
-          cp "$metadata" ../artifacts/sysupgrade-metadata.json
-          cp ../mainline-rg-x60-new-107m.config.full ../artifacts/config.full
-          cp bin/targets/mediatek/filogic/sha256sums ../artifacts/upstream-sha256sums
-          {
-            echo "source_repository=$OPENWRT_REPO"
-            echo "source_branch=$OPENWRT_BRANCH"
-            echo "source_commit=$SOURCE_COMMIT"
-            echo "device_profile=$PROFILE"
-            echo "compatible=ruijie,rg-x60-new-mtkuboot"
-            echo "ubi_offset=0x680000"
-            echo "ubi_size=0x6b00000"
-            echo "ubi_size_mib=107"
-            echo "fip_changed=false"
-          } > ../artifacts/BUILD-INFO.txt
-          (
-            cd ../artifacts
-            sha256sum *.bin > SHA256SUMS
-            ls -lh
-          )
-
-      - name: Show ccache statistics
-        if: always()
-        shell: bash
-        run: ccache --show-stats || true
-
-      - name: Save compiler cache
-        if: ${{ success() && inputs.clean_build == false && steps.ccache-cache.outputs.cache-hit != 'true' }}
-        uses: actions/cache/save@v4
-        with:
-          path: .ccache
-          key: ${{ steps.ccache-cache.outputs.cache-primary-key }}
-
-      - name: Debug SSH on failure
-        if: ${{ failure() && inputs.ssh_debug == true }}
-        uses: mxschmitt/action-tmate@v3
-        timeout-minutes: 60
-
-      - name: Upload firmware and verification files
-        uses: actions/upload-artifact@v4
-        with:
-          name: RG-X60-New-mainline-107M-${{ steps.source.outputs.short_sha }}
-          path: artifacts/
-          if-no-files-found: error
-          retention-days: 30
-
-      - name: Upload failure diagnostics
-        if: failure()
-        uses: actions/upload-artifact@v4
-        with:
-          name: RG-X60-New-mainline-107M-failure-logs-${{ github.run_number }}
-          path: |
-            build.log
-            mainline-rg-x60-new-107m.config.full
+            mainline-rg-x60-new-107m-*.config.full
             openwrt/.config
             openwrt/logs/
           if-no-files-found: ignore
