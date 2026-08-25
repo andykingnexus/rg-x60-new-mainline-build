@@ -9,6 +9,7 @@ Dedicated GitHub Actions build overlay for the Ruijie RG-X60 New (MT7986A, 512 M
 - Uses the fixed UBI partition: offset `0x680000`, size `0x6b00000` (107 MiB).
 - Does **not** build, download, or modify BL2 or FIP.
 - Preserves native nftables/firewall4, MediaTek HNAT, EN8811H, PPPoE, Wi-Fi, procd-ujail, and debugfs.
+- Removes the optional LuCI **Plugins** and **Network Diagnostics** pages from both firmware flavors; their core LuCI administration modules remain intact.
 - On a fresh configuration, radios without an existing country setting receive `AU`. A retained or manually set country is never overwritten.
 
 ## Firmware flavors
