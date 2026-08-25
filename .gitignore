@@ -1,0 +1,8 @@
+# Generated build output belongs in GitHub Actions artifacts, not Git.
+artifacts/
+openwrt/
+*.bin
+*.itb
+*.img
+*.tar
+*.tar.*
