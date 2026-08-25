@@ -2,6 +2,8 @@
 # Remove two optional LuCI views from the assembled feed before packaging.
 # luci-mod-system and luci-mod-network remain installed because they provide
 # core router administration; only these independent menu views are removed.
+# The operation is intentionally idempotent so local incremental builds can
+# reuse the same source tree.
 set -euo pipefail
 
 tree=${1:?OpenWrt source directory is required}
@@ -10,9 +12,9 @@ network_view="$tree/feeds/luci/modules/luci-mod-network/htdocs/luci-static/resou
 system_menu="$tree/feeds/luci/modules/luci-mod-system/root/usr/share/luci/menu.d/luci-mod-system.json"
 network_menu="$tree/feeds/luci/modules/luci-mod-network/root/usr/share/luci/menu.d/luci-mod-network.json"
 
-for path in "$system_view" "$network_view" "$system_menu" "$network_menu"; do
+for path in "$system_menu" "$network_menu"; do
   test -f "$path" || {
-    echo "Expected LuCI source file is missing: $path" >&2
+    echo "Expected LuCI menu source is missing: $path" >&2
     exit 1
   }
 done
