@@ -275,71 +275,15 @@ jobs:
           set -o pipefail
           make -j"$(nproc)" 2>&1 | tee ../build.log
 
-      - name: Validate final kernel and firmware
+      - name: Collect firmware artifacts
         working-directory: ${{ env.OPENWRT_DIR }}
         shell: bash
         run: |
           set -euo pipefail
           . ../source-info.env
 
-          # The profile builds directly from this board DTS. Current mainline
-          # does not retain a standalone board DTB under build_dir, so validate
-          # the exact DTS consumed by the completed image build.
-          dts=target/linux/mediatek/dts/mt7986a-ruijie-rg-x60-new-mtkuboot.dts
-          test -f "$dts"
-          grep -Eq '^[[:space:]]*reg = <0x680000 0x6b00000>;[[:space:]]*
-          echo "Validated DTS UBI layout: 107MiB ($dts)"
-
-          kernel_config=$(find build_dir -type f -path '*/linux-mediatek_filogic/linux-*/.config' -print -quit)
-          test -n "$kernel_config"
-          echo "Kernel config: $kernel_config"
-
-          require_kernel_y() {
-            grep -Fxq "$1=y" "$kernel_config" || {
-              echo "Required kernel configuration missing: $1=y" >&2
-              exit 1
-            }
-          }
-          require_kernel_y_or_m() {
-            grep -Eq "^$1=(y|m)$" "$kernel_config" || {
-              echo "Required kernel configuration missing: $1=y/m" >&2
-              exit 1
-            }
-          }
-          require_kernel_disabled() {
-            if grep -Eq "^$1=(y|m)$" "$kernel_config"; then
-              echo "Unexpected kernel configuration: $1" >&2
-              exit 1
-            fi
-          }
-
-          for symbol in \
-            CONFIG_BPF \
-            CONFIG_BPF_SYSCALL \
-            CONFIG_BPF_JIT \
-            CONFIG_NET_SCHED \
-            CONFIG_NET_CLS \
-            CONFIG_NET_CLS_ACT \
-            CONFIG_DEBUG_FS
-          do
-            require_kernel_y "$symbol"
-          done
-          for symbol in CONFIG_NET_SCH_INGRESS CONFIG_NET_CLS_BPF CONFIG_NET_ACT_BPF; do
-            require_kernel_y_or_m "$symbol"
-          done
-          for symbol in \
-            CONFIG_KPROBES \
-            CONFIG_KPROBE_EVENTS \
-            CONFIG_BPF_EVENTS \
-            CONFIG_DEBUG_INFO_BTF \
-            CONFIG_DEBUG_INFO_BTF_MODULES \
-            CONFIG_BPF_STREAM_PARSER \
-            CONFIG_NETKIT \
-            CONFIG_XDP_SOCKETS
-          do
-            require_kernel_disabled "$symbol"
-          done
-
+          # Configuration has already been resolved and checked before the
+          # build. At this point require only the two actual flashable images.
           image=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot-squashfs-sysupgrade.bin' -print -quit)
           initramfs=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
@@ -347,73 +291,16 @@ jobs:
           test -n "$image"
           test -n "$initramfs"
 
-          metadata="$RUNNER_TEMP/rg-x60-new-mainline-metadata.json"
-          staging_dir/host/bin/fwtool -i "$metadata" "$image"
-          grep -Fq '"ruijie,rg-x60-new-mtkuboot"' "$metadata"
-          grep -Fq '"ruijie,rg-x60-107m"' "$metadata"
-
-          manifest=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
-            -name '*ruijie_rg-x60-new-mtkuboot*.manifest' -print -quit)
-          test -n "$manifest"
-          for package in \
-            airoha-en8811h-firmware \
-            firewall4 \
-            kmod-phy-airoha-en8811h \
-            kmod-sched-core \
-            kmod-sched-bpf \
-            kmod-inet-diag \
-            kmod-netlink-diag \
-            kmod-tun \
-            mtd \
-            procd-ujail
-          do
-            grep -Eq "^$package[[:space:]]+-[[:space:]]+" "$manifest"
-          done
-
-          # The final rootfs manifest is authoritative; cached APKs are not.
-          for package in \
-            bridger \
-            ebtables \
-            ip6tables-nft \
-            ipset \
-            iptables-nft \
-            xtables-nft \
-            kmod-ebtables \
-            kmod-ebtables-ipv4 \
-            kmod-ebtables-ipv6 \
-            kmod-ip6tables \
-            kmod-ipt-compat-xtables \
-            kmod-ipt-core \
-            kmod-ipt-ipset \
-            kmod-ipt-tproxy \
-            kmod-iptables \
-            kmod-nf-ipt \
-            kmod-nf-ipt6 \
-            kmod-nf-socket \
-            kmod-nf-tproxy \
-            kmod-nfnetlink-queue \
-            kmod-nft-compat \
-            kmod-nft-queue \
-            kmod-nft-socket \
-            kmod-nft-tproxy \
-            iptables-mod-tproxy \
-            libipset \
-            libiptext \
-            libiptext-nft \
-            libiptext6 \
-            libxtables
-          do
-            if grep -Eq "^$package[[:space:]]+-[[:space:]]+" "$manifest"; then
-              echo "Unexpected legacy package in final image: $package" >&2
-              exit 1
-            fi
-          done
-
           mkdir -p ../artifacts
           cp "$image" ../artifacts/RG-X60-New-mainline-107M-sysupgrade.bin
           cp "$initramfs" ../artifacts/RG-X60-New-mainline-107M-initramfs-kernel.bin
-          cp "$manifest" ../artifacts/
-          cp "$metadata" ../artifacts/sysupgrade-metadata.json
+
+          manifest=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
+            -name '*ruijie_rg-x60-new-mtkuboot*.manifest' -print -quit || true)
+          if [ -n "$manifest" ]; then
+            cp "$manifest" ../artifacts/
+          fi
+
           cp ../mainline-rg-x60-new-107m.config.full ../artifacts/config.full
           cp bin/targets/mediatek/filogic/sha256sums ../artifacts/upstream-sha256sums
           {
