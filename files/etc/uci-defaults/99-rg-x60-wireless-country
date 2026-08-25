@@ -1,0 +1,16 @@
+#!/bin/sh
+# Default only an unconfigured radio to Australia. Existing retained settings
+# (including any explicit country) are deliberately left unchanged.
+[ -s /etc/config/wireless ] || wifi config
+
+changed=0
+for radio in radio0 radio1; do
+	if uci -q get "wireless.${radio}" >/dev/null && \
+		[ -z "$(uci -q get "wireless.${radio}.country")" ]; then
+		uci -q set "wireless.${radio}.country=AU"
+		changed=1
+	fi
+done
+
+[ "$changed" -eq 1 ] && uci commit wireless
+exit 0
