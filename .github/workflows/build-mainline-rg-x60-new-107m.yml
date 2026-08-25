@@ -67,7 +67,7 @@ jobs:
             ack antlr3 asciidoc autoconf automake autopoint binutils bison \
             build-essential bzip2 ccache clang cmake cpio curl device-tree-compiler \
             file flex g++ gawk gcc-multilib g++-multilib genisoimage gettext git \
-            gperf help2man intltool lib32gcc-s1 libc6-dev-i386 libelf-dev \
+            gperf help2man intltool jq lib32gcc-s1 libc6-dev-i386 libelf-dev \
             libglib2.0-dev libgmp3-dev libgnutls28-dev libltdl-dev libmpc-dev \
             libmpfr-dev libncurses-dev libpython3-dev libreadline-dev libssl-dev \
             libtool libyaml-dev lld llvm lrzsz msmtp nano ninja-build p7zip-full \
@@ -108,7 +108,7 @@ jobs:
         id: ccache-cache
         with:
           path: .ccache
-          key: mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m*.config', 'files/**', 'mainline/**', 'scripts/apply-mainline-rg-x60-new.sh', 'scripts/validate-mainline-config.sh') }}
+          key: mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-${{ hashFiles('defconfig/mainline-rg-x60-new-107m*.config', 'files/**', 'mainline/**', 'scripts/**') }}
           restore-keys: |
             mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-${{ steps.source.outputs.sha }}-
             mainline-rgx60new-107m-${{ inputs.firmware_flavor }}-ccache-${{ runner.os }}-
@@ -141,6 +141,12 @@ jobs:
           set -euo pipefail
           ./scripts/feeds update -a
           ./scripts/feeds install -a
+
+      - name: Remove unused LuCI pages
+        shell: bash
+        run: |
+          set -euo pipefail
+          bash scripts/remove-unused-luci-pages.sh "$OPENWRT_DIR"
 
       - name: Resolve selected firmware configuration
         working-directory: ${{ env.OPENWRT_DIR }}
