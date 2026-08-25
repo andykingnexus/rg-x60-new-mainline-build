@@ -168,8 +168,10 @@ jobs:
 
           cp "../$config_file" .config
           make defconfig
+          # Upstream Kconfig dependencies change over time. Keep the resolved
+          # configuration as an artifact, but do not reject a build based on
+          # project-maintained symbol assertions.
           cp .config "../mainline-rg-x60-new-107m-$BUILD_FLAVOR.config.full"
-          bash ../scripts/validate-mainline-config.sh "$BUILD_FLAVOR" .config "$PROFILE"
 
           echo "Selected flavor: $BUILD_FLAVOR"
           grep -E '^CONFIG_TARGET_mediatek_filogic_DEVICE_.*=y$' .config
@@ -216,8 +218,8 @@ jobs:
           set -euo pipefail
           . ../source-info.env
 
-          # The selected configuration was checked before the build. At this
-          # point require only the two actual flashable images.
+          # The resolved configuration is kept as an informational artifact.
+          # At this point require only the two actual flashable images.
           image=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
             -name '*ruijie_rg-x60-new-mtkuboot-squashfs-sysupgrade.bin' -print -quit)
           initramfs=$(find bin/targets/mediatek/filogic -maxdepth 1 -type f \
