@@ -282,10 +282,13 @@ jobs:
           set -euo pipefail
           . ../source-info.env
 
-          dtb=$(find build_dir -type f -name 'mt7986a-ruijie-rg-x60-new-mtkuboot.dtb' -print -quit)
-          test -n "$dtb"
-          echo "Compiled DTB: $dtb"
-          fdtdump "$dtb" | grep -Eq '0x00680000[[:space:]]+0x06b00000'
+          # The profile builds directly from this board DTS. Current mainline
+          # does not retain a standalone board DTB under build_dir, so validate
+          # the exact DTS consumed by the completed image build.
+          dts=target/linux/mediatek/dts/mt7986a-ruijie-rg-x60-new-mtkuboot.dts
+          test -f "$dts"
+          grep -Fqx 'reg = <0x680000 0x6b00000>;' "$dts"
+          echo "Validated DTS UBI layout: 107MiB ($dts)"
 
           kernel_config=$(find build_dir -type f -path '*/linux-mediatek_filogic/linux-*/.config' -print -quit)
           test -n "$kernel_config"
