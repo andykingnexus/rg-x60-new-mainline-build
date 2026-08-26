@@ -228,6 +228,17 @@ jobs:
           test -n "$initramfs"
 
           mkdir -p ../artifacts
+          # Informational only: preserve the resolved Linux configuration.
+          # Do not make builds conditional on individual kernel symbols.
+          kernel_config=$(find build_dir -type f \
+            -path '*/linux-mediatek_filogic/linux-*/.config' -print -quit)
+          if [ -n "$kernel_config" ]; then
+            cp "$kernel_config" ../artifacts/kernel.config
+          else
+            printf '%s\n' 'Final kernel .config was not located; this does not affect the firmware build.' \
+              > ../artifacts/KERNEL-CONFIG-NOT-FOUND.txt
+          fi
+
           cp "$image" "../artifacts/RG-X60-New-mainline-107M-$BUILD_FLAVOR-sysupgrade.bin"
           cp "$initramfs" "../artifacts/RG-X60-New-mainline-107M-$BUILD_FLAVOR-initramfs-kernel.bin"
 
